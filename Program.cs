@@ -1,158 +1,266 @@
-﻿using System;
-using System.IO;
-using System.Linq;
-using System.Net.Http;
-using System.Threading.Tasks;
+﻿using ConfuserEx_Dynamic_Unpacker.Protections;
+using dnlib.DotNet;
+using dnlib.DotNet.Emit;
+using dnlib.DotNet.Writer;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
-using SharpCompress.Archives;
-using SharpCompress.Common;
+using System;
+using System.IO;
+using System.Linq;
+using System.Reflection;
 
-class Program
+namespace ConfuserEx_Dynamic_Unpacker
 {
-    static async Task Main()
+    class Program
     {
-        const string inputFile = "RustTweaker.exe";
-        const string outputFile = "RustTweaker_Patched.exe";
-        const string downloadUrl = "https://rusttweaker.com/RustTweaker_v1.0.0.rar";
-        const string rarFile = "RustTweaker_v1.0.0.rar";
+        public static ModuleDefMD module;
+        public static Assembly asm;
+        public static bool veryVerbose = false;
 
-        if (!File.Exists(inputFile))
+        static void Main(string[] args)
         {
-            Console.WriteLine("RustTweaker.exe not found. Downloading...");
-            await DownloadFile(downloadUrl, rarFile);
-            Console.WriteLine("Download complete. Extracting...");
-            ExtractRar(rarFile);
-            Console.WriteLine("Extraction complete.");
+            string inputFile = "RustTweaker.exe";
+            string decodedFile = "RustTweaker_Decompiled.exe";
+            string outputFile = "RustTweaker_Patched.exe";
 
             if (!File.Exists(inputFile))
             {
-                Console.WriteLine("Error: RustTweaker.exe not found after extraction.");
+                Console.WriteLine("[!] RustTweaker.exe not found!");
                 Console.ReadKey();
                 return;
             }
+
+            try
+            {
+                Console.WriteLine("[*] Loading assembly...");
+                module = ModuleDefMD.Load(inputFile);
+
+                Console.WriteLine("\n[*] Removing ConfuserEx protections...");
+                DeobfuscateConfuserEx();
+
+                SaveModule(decodedFile);
+
+                Console.WriteLine("\n[*] Patching authentication...");
+                PatchAuthentication(decodedFile, outputFile);
+
+                Console.WriteLine("\n╔══════════════════════════════════════════════════╗");
+                Console.WriteLine("║ [✓] SUCCESS! RustTweaker fully bypassed          ║");
+                Console.WriteLine("║ [✓] Run: RustTweaker_Patched.exe                 ║");
+                Console.WriteLine("║ [✓] Patched by: https://github.com/lowcode1337   ║");
+                Console.WriteLine("╚══════════════════════════════════════════════════╝\n");
+            }
+            catch (Exception ex)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"\n[!] Fatal Error: {ex.Message}");
+                Console.ForegroundColor = ConsoleColor.Green;
+            }
+
+            Console.ReadKey();
         }
 
-        Console.WriteLine("Starting patch process...");
-
-        var module = ModuleDefinition.ReadModule(inputFile);
-
-        var loginForm = module.Types.First(t => t.Name == "LoginForm");
-        var checkerMethod = loginForm.Methods.First(m => m.Name == "Сhecker");
-
-        checkerMethod.Body.Instructions.Clear();
-        checkerMethod.Body.Variables.Clear();
-
-        var il = checkerMethod.Body.GetILProcessor();
-
-        var formType = module.AssemblyReferences
-            .SelectMany(a => module.AssemblyResolver.Resolve(a).MainModule.Types)
-            .First(t => t.FullName == "System.Windows.Forms.Form");
-
-        var dialogResultSetter = module.ImportReference(
-            formType.Properties.First(p => p.Name == "DialogResult").SetMethod);
-
-        var controlType = module.AssemblyReferences
-            .SelectMany(a => module.AssemblyResolver.Resolve(a).MainModule.Types)
-            .First(t => t.FullName == "System.Windows.Forms.Control");
-
-        var hideMethod = module.ImportReference(
-            controlType.Methods.First(m => m.Name == "Hide" && m.Parameters.Count == 0));
-
-        var mscorlibRef = module.AssemblyReferences.First(a => a.Name == "mscorlib");
-        var mscorlib = module.AssemblyResolver.Resolve(mscorlibRef);
-        var taskType = mscorlib.MainModule.Types.First(t => t.FullName == "System.Threading.Tasks.Task");
-        var taskCompletedTask = module.ImportReference(
-            taskType.Properties.First(p => p.Name == "CompletedTask").GetMethod);
-
-        var notificationService = module.Types.First(t => t.Name == "NotificationService");
-        var showNotification = module.ImportReference(
-            notificationService.Methods.First(m => m.Name == "ShowNotification" && m.Parameters.Count == 2));
-
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Ldc_I4_1);
-        il.Emit(OpCodes.Callvirt, dialogResultSetter);
-
-        il.Emit(OpCodes.Ldstr, "Welcome! RustTweaker - patched by lowcode1337 (https://github.com/lowcode1337)");
-        il.Emit(OpCodes.Ldc_I4, 2000);
-        il.Emit(OpCodes.Call, showNotification);
-        il.Emit(OpCodes.Pop);
-
-        il.Emit(OpCodes.Ldarg_0);
-        il.Emit(OpCodes.Callvirt, hideMethod);
-
-        il.Emit(OpCodes.Call, taskCompletedTask);
-        il.Emit(OpCodes.Ret);
-
-        var mainForm = module.Types.First(t => t.Name == "MainForm");
-        var initMethod = mainForm.Methods.First(m => m.Name == "InitializeComponent");
-
-        foreach (var instruction in initMethod.Body.Instructions)
+        static void DeobfuscateConfuserEx()
         {
-            if (instruction.OpCode == OpCodes.Ldstr)
+            RemoveAntiTamper();
+            RemovePacker();
+            CleanControlFlow();
+            CleanProxyCalls();
+            DecryptStrings();
+        }
+
+        static void RemoveAntiTamper()
+        {
+            try
             {
-                string str = instruction.Operand as string;
-                if (str != null && (str.Contains("RustTweaker") || str.Contains("Rust Tweaker")))
+                var isTampered = AntiTamper.IsTampered(module);
+                if (isTampered == true)
                 {
-                    instruction.Operand = "RustTweaker - patched by lowcode1337 (https://github.com/lowcode1337)";
-                    Console.WriteLine($"Changed string: (0x{instruction.Offset:x8}){str} -> {instruction.Operand}");
+                    Console.WriteLine("  [+] Anti-Tamper detected");
+
+                    var stream = module.Metadata.PEImage.CreateReader();
+                    byte[] rawBytes = stream.ReadBytes((int)stream.Length);
+
+                    module = AntiTamper.UnAntiTamper(module, rawBytes);
+                    Console.WriteLine("  [✓] Anti-Tamper removed successfully");
                 }
+                else
+                {
+                    Console.WriteLine("  [i] No Anti-Tamper detected");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  [!] Anti-Tamper removal error: {ex.Message}");
             }
         }
 
-        module.Write(outputFile);
-        Console.WriteLine("Patched successfully!");
-        Console.WriteLine($"Run {outputFile} to use the patched version.");
-        Console.ReadKey();
-    }
-
-    static async Task DownloadFile(string url, string outputPath)
-    {
-        using (var client = new HttpClient())
+        static void RemovePacker()
         {
-            client.Timeout = TimeSpan.FromMinutes(10);
-
-            var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
-            response.EnsureSuccessStatusCode();
-
-            var totalBytes = response.Content.Headers.ContentLength ?? -1L;
-            var canReportProgress = totalBytes != -1;
-
-            using (var contentStream = await response.Content.ReadAsStreamAsync())
-            using (var fileStream = new FileStream(outputPath, FileMode.Create, FileAccess.Write, FileShare.None, 8192, true))
+            try
             {
-                var buffer = new byte[8192];
-                var totalRead = 0L;
-                int read;
-
-                while ((read = await contentStream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                if (Packer.IsPacked(module))
                 {
-                    await fileStream.WriteAsync(buffer, 0, read);
-                    totalRead += read;
+                    Console.WriteLine("  [+] Compressor/Packer detected");
 
-                    if (canReportProgress)
+                    if (StaticPacker.Run(module))
                     {
-                        var progress = (int)((totalRead * 100) / totalBytes);
-                        Console.Write($"\rProgress: {progress}%");
+                        RemoveAntiTamper();
+                        module.EntryPoint = module.ResolveToken(StaticPacker.epToken) as MethodDef;
+                        Console.WriteLine("  [✓] Compressor removed successfully");
+                    }
+                    else
+                    {
+                        Console.WriteLine("  [!] Static unpacking failed");
                     }
                 }
-                Console.WriteLine();
+                else
+                {
+                    Console.WriteLine("  [i] No packer detected");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  [!] Packer removal error: {ex.Message}");
             }
         }
-    }
 
-    static void ExtractRar(string rarPath)
-    {
-        using (var archive = ArchiveFactory.Open(rarPath))
+        static void CleanControlFlow()
         {
-            foreach (var entry in archive.Entries.Where(e => !e.IsDirectory))
+            try
             {
-                Console.WriteLine($"Extracting: {entry.Key}");
-                entry.WriteToDirectory(".", new ExtractionOptions()
+                Console.WriteLine("  [+] Cleaning control flow obfuscation...");
+                ControlFlowRun.cleaner(module);
+                Console.WriteLine("  [✓] Control flow cleaned");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  [!] Control flow cleaning error: {ex.Message}");
+            }
+        }
+
+        static void CleanProxyCalls()
+        {
+            try
+            {
+                Console.WriteLine("  [+] Removing proxy calls...");
+                int removed = ReferenceProxy.ProxyFixer(module);
+                Console.WriteLine($"  [✓] Removed {removed} proxy calls");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  [!] Proxy removal error: {ex.Message}");
+            }
+        }
+
+        static void DecryptStrings()
+        {
+            try
+            {
+                Console.WriteLine("  [+] Decrypting strings...");
+                int decrypted = StaticStrings.Run(module);
+                Console.WriteLine($"  [✓] Decrypted {decrypted} strings");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  [!] String decryption error: {ex.Message}");
+            }
+        }
+
+        static void PatchAuthentication(string inputFile, string outputFile)
+        {
+            try
+            {
+                Console.WriteLine("Starting patch process...");
+
+                var module = ModuleDefinition.ReadModule(inputFile);
+
+                var loginForm = module.Types.First(t => t.Name == "LoginForm");
+                var checkerMethod = loginForm.Methods.First(m => m.Name == "Сhecker");
+
+                checkerMethod.Body.Instructions.Clear();
+                checkerMethod.Body.Variables.Clear();
+
+                var il = checkerMethod.Body.GetILProcessor();
+
+                var formType = module.AssemblyReferences
+                    .SelectMany(a => module.AssemblyResolver.Resolve(a).MainModule.Types)
+                    .First(t => t.FullName == "System.Windows.Forms.Form");
+
+                var dialogResultSetter = module.ImportReference(
+                    formType.Properties.First(p => p.Name == "DialogResult").SetMethod);
+
+                var controlType = module.AssemblyReferences
+                    .SelectMany(a => module.AssemblyResolver.Resolve(a).MainModule.Types)
+                    .First(t => t.FullName == "System.Windows.Forms.Control");
+
+                var hideMethod = module.ImportReference(
+                    controlType.Methods.First(m => m.Name == "Hide" && m.Parameters.Count == 0));
+
+                var mscorlibRef = module.AssemblyReferences.First(a => a.Name == "mscorlib");
+                var mscorlib = module.AssemblyResolver.Resolve(mscorlibRef);
+                var taskType = mscorlib.MainModule.Types.First(t => t.FullName == "System.Threading.Tasks.Task");
+                var taskCompletedTask = module.ImportReference(
+                    taskType.Properties.First(p => p.Name == "CompletedTask").GetMethod);
+
+                var notificationService = module.Types.First(t => t.Name == "NotificationService");
+                var showNotification = module.ImportReference(
+                    notificationService.Methods.First(m => m.Name == "ShowNotification" && m.Parameters.Count == 2));
+
+                il.Emit(Mono.Cecil.Cil.OpCodes.Ldarg_0);
+                il.Emit(Mono.Cecil.Cil.OpCodes.Ldc_I4_1);
+                il.Emit(Mono.Cecil.Cil.OpCodes.Callvirt, dialogResultSetter);
+
+                il.Emit(Mono.Cecil.Cil.OpCodes.Ldstr, "Welcome! RustTweaker - patched by lowcode1337 (https://github.com/lowcode1337)");
+                il.Emit(Mono.Cecil.Cil.OpCodes.Ldc_I4, 2000);
+                il.Emit(Mono.Cecil.Cil.OpCodes.Call, showNotification);
+                il.Emit(Mono.Cecil.Cil.OpCodes.Pop);
+
+                il.Emit(Mono.Cecil.Cil.OpCodes.Ldarg_0);
+                il.Emit(Mono.Cecil.Cil.OpCodes.Callvirt, hideMethod);
+
+                il.Emit(Mono.Cecil.Cil.OpCodes.Call, taskCompletedTask);
+                il.Emit(Mono.Cecil.Cil.OpCodes.Ret);
+
+                var mainForm = module.Types.First(t => t.Name == "MainForm");
+                var initMethod = mainForm.Methods.First(m => m.Name == "InitializeComponent");
+
+                foreach (var instruction in initMethod.Body.Instructions)
                 {
-                    ExtractFullPath = false,
-                    Overwrite = true
-                });
+                    if (instruction.OpCode == Mono.Cecil.Cil.OpCodes.Ldstr)
+                    {
+                        string str = instruction.Operand as string;
+                        if (str != null && (str.Contains("RustTweaker") || str.Contains("Rust Tweaker")))
+                        {
+                            instruction.Operand = "RustTweaker - patched by lowcode1337 (https://github.com/lowcode1337)";
+                            Console.WriteLine($"Changed string: (0x{instruction.Offset:x8}){str} -> {instruction.Operand}");
+                        }
+                    }
+                }
+
+                module.Write(outputFile);
+
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  [!] Authentication patch error: {ex.Message}");
+            }
+        }
+
+        static void SaveModule(string outputPath)
+        {
+            try
+            {
+                var writerOptions = new ModuleWriterOptions(module);
+                writerOptions.MetadataOptions.Flags |= MetadataFlags.PreserveAll;
+                writerOptions.Logger = DummyLogger.NoThrowInstance;
+
+                module.Write(outputPath, writerOptions);
+                Console.WriteLine("  [✓] File saved successfully");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  [!] Save error: {ex.Message}");
+                throw;
             }
         }
     }
