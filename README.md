@@ -29,7 +29,7 @@ This patcher completely removes the authentication mechanism from RustTweaker by
 
 ### Method 1: Using Pre-built Release
 
-1. Download and install RustTweaker from the official installer: https://rusttweaker.com/RustTweakerInstaller.exe
+1. Download and install RustTweaker from the official installer: https://rusttweaker.com/installer.exe
 2. Navigate to installation folder (default: `C:\Program Files (x86)\RustTweaker\`)
 3. Copy `RustTweaker.exe` to the same folder as `RustTweakerPatcher.exe`
 4. Run `RustTweakerPatcher.exe`
